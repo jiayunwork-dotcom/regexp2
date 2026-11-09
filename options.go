@@ -35,6 +35,9 @@ const (
 	ECMAScript RegexOptions = 0x0100 // "e"
 	RE2        RegexOptions = 0x0200 // RE2 (regexp package) compatibility mode
 	Unicode    RegexOptions = 0x0400 // "u"
+	// UnicodeSets enables the ECMAScript /v (unicodeSets) character class set
+	// expressions. It is only valid together with ECMAScript and Unicode.
+	UnicodeSets RegexOptions = 0x0800 // "v"
 )
 
 // OptimizationOptions controls runtime limits, optional caches, and compile-time fast paths.

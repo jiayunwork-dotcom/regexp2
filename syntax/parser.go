@@ -22,6 +22,7 @@ const (
 	ECMAScript              RegexOptions = 0x0100 // "e"
 	RE2                     RegexOptions = 0x0200 // RE2 compat mode
 	Unicode                 RegexOptions = 0x0400 // "u"
+	UnicodeSets             RegexOptions = 0x0800 // ECMAScript "v"
 )
 
 func optionFromCode(ch rune) RegexOptions {
@@ -109,6 +110,12 @@ const (
 	ErrUnterminatedBracket        = "unterminated [] set"
 	ErrSubtractionMustBeLast      = "a subtraction must be the last element in a character class"
 	ErrReversedCharRange          = "[%c-%c] range in reverse order"
+	ErrUnicodeSetsNeedsFlags      = "UnicodeSets requires the ECMAScript and Unicode options"
+	ErrInvalidClassSetExpression  = "invalid set expression in UnicodeSets character class"
+	ErrClassReservedPunctuation   = "punctuation '%c' must be escaped inside a UnicodeSets character class"
+	ErrClassReservedDoublePunct   = "reserved double punctuator '%c%c' inside a UnicodeSets character class"
+	ErrClassStringDisjunction     = `string disjunction \q{...} is not supported`
+	ErrStringPropertyNotSupported = "string unicode property '%v' is not supported in UnicodeSets mode"
 )
 
 func (e ErrorCode) String() string {
@@ -167,6 +174,13 @@ const (
 
 // Parse converts a regex string into a parse tree
 func Parse(re string, op ParseOptions) (*RegexTree, error) {
+	// The ECMAScript /v flag implies /u and is only defined alongside the
+	// ECMAScript parsing rules.
+	if op.RegexOptions&UnicodeSets != 0 &&
+		op.RegexOptions&(ECMAScript|Unicode) != ECMAScript|Unicode {
+		return nil, &Error{Code: ErrUnicodeSetsNeedsFlags, Expr: re}
+	}
+
 	p := parser{
 		options:              op.RegexOptions,
 		caps:                 make(map[int]int),
@@ -1531,6 +1545,14 @@ func (p *parser) scanBackslash(scanOnly bool) (*RegexNode, error) {
 		}
 		return newRegexNodeSet(NtSet, p.options, NotDigitClass()), nil
 
+	case 'q':
+		// ECMAScript /v string disjunction is intentionally unsupported.
+		if p.useOptionV() {
+			p.moveRight(1)
+			return nil, p.getErr(ErrClassStringDisjunction)
+		}
+		return p.scanBasicBackslash(scanOnly)
+
 	case 'p', 'P':
 		// skip if we're in ECMAScript mode WITHOUT unicode flag
 		if p.useOptionE() && !p.useOptionU() {
@@ -1768,6 +1790,12 @@ func (p *parser) parseProperty() (string, error) {
 		return "", p.getErr(ErrIncompleteSlashP)
 	}
 
+	// /v string-valued properties match code point sequences and are not
+	// supported; they must not silently fall through as unknown properties.
+	if p.useOptionV() && ecmaStringProperties[capname] {
+		return "", p.getErr(ErrStringPropertyNotSupported, capname)
+	}
+
 	resolve := canonicalUnicodeCatName
 	if p.useOptionE() && p.useOptionU() {
 		resolve = canonicalECMAProperty
@@ -1942,6 +1970,10 @@ func (p *parser) scanCapname() (string, error) {
 
 // Scans contents of [] (not including []'s), and converts to a set.
 func (p *parser) scanCharSet(caseInsensitive, scanOnly bool) (*CharSet, error) {
+	if p.useOptionV() {
+		return p.scanCharSetV(caseInsensitive, scanOnly)
+	}
+
 	var ch rune
 	chPrev := '\x00'
 	var classPrev rune // ECMAScript range's left class escape, or zero for a character.
@@ -2618,6 +2650,11 @@ func (p *parser) useRE2() bool {
 // True if U option enabling ECMAScript's Unicode behavior on.
 func (p *parser) useOptionU() bool {
 	return (p.options & Unicode) != 0
+}
+
+// True if the ECMAScript "v" (unicodeSets) option is on.
+func (p *parser) useOptionV() bool {
+	return (p.options & UnicodeSets) != 0
 }
 
 // True if options stack is empty.
